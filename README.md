@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Seedbed Voter
 
-## Getting Started
+A lightweight voting app for Finova team members to vote on shortlisted AI ideas from Seedbed.
 
-First, run the development server:
+## Purpose
+
+The AI Council shortlists ideas from [Seedbed](https://seedbed.vercel.app). This app lets ~40 people across the Product Org view the 5 finalists and cast a single vote for their favourite. No auth — trust-based voting by name entry.
+
+## Stack
+
+- **Next.js 14** (App Router)
+- **Supabase** JS client (same project as Seedbed)
+- **Tailwind CSS** (Finova design system)
+- **Vercel** for deployment
+
+## Local setup
+
+```bash
+git clone https://github.com/RajiBhamidipati/seedbed-voter.git
+cd seedbed-voter
+npm install
+```
+
+Copy `.env.local.example` to `.env.local` and fill in your Supabase credentials:
+
+```bash
+cp .env.local.example .env.local
+```
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+These are the same credentials used by the main Seedbed app.
+
+Then run:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy to Vercel
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Push this repo to GitHub
+2. Import the repo in [Vercel](https://vercel.com/new)
+3. Add environment variables:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+4. Deploy
 
-## Learn More
+## Supabase requirements
 
-To learn more about Next.js, take a look at the following resources:
+This app uses existing tables from the Seedbed project — no schema changes needed.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**Real-time:** For live vote counts, enable Realtime on the `votes` table in Supabase Dashboard > Database > Replication.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Features
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- View 5 shortlisted AI ideas with full details (problem, solution, pillars, gates, score)
+- Cast one vote per person (case-insensitive duplicate detection)
+- Live vote counts via Supabase Realtime
+- Export all votes as CSV

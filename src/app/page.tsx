@@ -1,101 +1,375 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
+import { Submission, PILLARS, GATES, SHORTLISTED_TITLES } from "@/lib/types";
+
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+function scoreLabel(total: number | null) {
+  if (total === null) return { label: "Needs Clarity", color: "text-[#8b6914]", bg: "bg-[#fef3cd]" };
+  if (total >= 12) return { label: "Proceed to POC", color: "text-green-sem", bg: "bg-green-bg" };
+  if (total >= 8) return { label: "Conditional", color: "text-amber-sem", bg: "bg-amber-bg" };
+  return { label: "Park for now", color: "text-red-sem", bg: "bg-red-bg" };
+}
+
+function gateColor(val: string) {
+  if (val === "Yes") return "text-green-sem bg-green-bg";
+  if (val === "Partially") return "text-amber-sem bg-amber-bg";
+  return "text-red-sem bg-red-bg";
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [ideas, setIdeas] = useState<Submission[]>([]);
+  const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [voterName, setVoterName] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  // Fetch shortlisted ideas
+  useEffect(() => {
+    async function fetchIdeas() {
+      const { data, error } = await supabase
+        .from("submissions")
+        .select("*")
+        .in("title", SHORTLISTED_TITLES)
+        .order("title");
+      if (!error && data) setIdeas(data as Submission[]);
+      setLoading(false);
+    }
+    fetchIdeas();
+  }, []);
+
+  // Fetch vote counts
+  const fetchVoteCounts = useCallback(async () => {
+    if (ideas.length === 0) return;
+    const ids = ideas.map((i) => i.id);
+    const { data } = await supabase
+      .from("votes")
+      .select("submission_id")
+      .in("submission_id", ids);
+    if (data) {
+      const counts: Record<string, number> = {};
+      ids.forEach((id) => (counts[id] = 0));
+      data.forEach((v: { submission_id: string }) => {
+        counts[v.submission_id] = (counts[v.submission_id] || 0) + 1;
+      });
+      setVoteCounts(counts);
+    }
+  }, [ideas]);
+
+  useEffect(() => {
+    fetchVoteCounts();
+  }, [fetchVoteCounts]);
+
+  // Real-time subscription for votes
+  useEffect(() => {
+    if (ideas.length === 0) return;
+    const channel = supabase
+      .channel("votes-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "votes" },
+        () => {
+          fetchVoteCounts();
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [ideas, fetchVoteCounts]);
+
+  // Submit vote
+  async function handleVote() {
+    const name = voterName.trim();
+    if (!name) {
+      setMessage({ type: "error", text: "Please enter your name." });
+      return;
+    }
+    if (!selectedId) {
+      setMessage({ type: "error", text: "Please select an idea to vote for." });
+      return;
+    }
+    setSubmitting(true);
+    setMessage(null);
+
+    // Case-insensitive duplicate check
+    const { data: existing } = await supabase
+      .from("votes")
+      .select("voter_name")
+      .ilike("voter_name", name);
+
+    if (existing && existing.length > 0) {
+      setMessage({ type: "error", text: `You've already voted, ${name}.` });
+      setSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("votes")
+      .insert({ submission_id: selectedId, voter_name: name });
+
+    if (error) {
+      if (error.code === "23505") {
+        setMessage({ type: "error", text: `You've already voted, ${name}.` });
+      } else {
+        setMessage({ type: "error", text: "Something went wrong. Please try again." });
+      }
+    } else {
+      setMessage({ type: "success", text: `Thanks for voting, ${name}!` });
+      setSelectedId(null);
+      setVoterName("");
+    }
+    setSubmitting(false);
+  }
+
+  // CSV export
+  async function exportCSV() {
+    if (ideas.length === 0) return;
+    const ids = ideas.map((i) => i.id);
+    const { data: votes } = await supabase
+      .from("votes")
+      .select("voter_name, submission_id, created_at")
+      .in("submission_id", ids)
+      .order("created_at");
+
+    if (!votes || votes.length === 0) {
+      setMessage({ type: "error", text: "No votes to export yet." });
+      return;
+    }
+
+    const titleMap = Object.fromEntries(ideas.map((i) => [i.id, i.title]));
+    const rows = [
+      ["voter_name", "idea_title", "created_at"],
+      ...votes.map((v: { voter_name: string; submission_id: string; created_at: string }) => [
+        v.voter_name,
+        titleMap[v.submission_id] || "",
+        v.created_at,
+      ]),
+    ];
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "seedbed-votes.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const totalVotes = Object.values(voteCounts).reduce((a, b) => a + b, 0);
+
+  return (
+    <main className="min-h-screen">
+      {/* Hero */}
+      <div className="bg-ink px-7 pb-10 pt-8">
+        <h1 className="text-white font-extrabold text-[28px] tracking-tight mb-1">
+          Vote for your favourite AI idea
+        </h1>
+        <p className="text-white/50 text-[15px] max-w-xl">
+          The AI Council has shortlisted 5 ideas from Seedbed. Pick the one you
+          think we should build first.
+        </p>
+      </div>
+
+      {/* Content */}
+      <div className="max-w-3xl mx-auto px-5 py-8">
+        {/* Voter input + controls */}
+        <div className="bg-white rounded-card p-6 shadow-card mb-8 fade-up">
+          <label className="font-mono text-[11px] uppercase tracking-wider font-medium text-ink block mb-1.5">
+            Your name
+          </label>
+          <div className="flex gap-3 items-start flex-wrap">
+            <input
+              type="text"
+              value={voterName}
+              onChange={(e) => setVoterName(e.target.value)}
+              placeholder="e.g. Jane Smith"
+              className="flex-1 min-w-[200px] px-3.5 py-2.5 rounded-lg border-[1.5px] border-border text-[14px] text-ink bg-white outline-none focus:border-brand transition-colors"
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            <button
+              onClick={handleVote}
+              disabled={submitting}
+              className="bg-glow text-ink border-none rounded-[10px] px-6 py-2.5 font-bold text-[14px] hover:brightness-95 transition disabled:opacity-50"
+            >
+              {submitting ? "Voting…" : "Cast Vote"}
+            </button>
+            <button
+              onClick={exportCSV}
+              className="bg-transparent text-ink border-[1.5px] border-ink rounded-[10px] px-5 py-2.5 font-semibold text-[14px] hover:bg-ink hover:text-white transition"
+            >
+              Export Results (CSV)
+            </button>
+          </div>
+          {message && (
+            <p
+              className={`mt-3 text-[13px] font-medium ${
+                message.type === "success" ? "text-green-sem" : "text-red-sem"
+              }`}
+            >
+              {message.text}
+            </p>
+          )}
+          <p className="mt-3 font-mono text-[11px] text-muted uppercase tracking-wider">
+            {totalVotes} vote{totalVotes !== 1 ? "s" : ""} cast so far
+          </p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+
+        {/* Idea cards */}
+        {loading ? (
+          <p className="text-center text-muted text-[14px] py-10">
+            Loading ideas…
+          </p>
+        ) : ideas.length === 0 ? (
+          <p className="text-center text-muted text-[14px] py-10">
+            No shortlisted ideas found. Check your Supabase connection and data.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-5">
+            {ideas.map((idea, i) => {
+              const isSelected = selectedId === idea.id;
+              const pillars = (idea.pillars || [])
+                .map((pid) => PILLARS[pid])
+                .filter(Boolean);
+              const total = idea.total_score;
+              const sl = scoreLabel(total > 0 ? total : null);
+              const votes = voteCounts[idea.id] || 0;
+
+              return (
+                <div
+                  key={idea.id}
+                  onClick={() => setSelectedId(idea.id)}
+                  className={`fade-up bg-white rounded-card p-0 shadow-card cursor-pointer transition-all overflow-hidden ${
+                    isSelected
+                      ? "ring-[2.5px] ring-glow"
+                      : "hover:translate-x-[3px]"
+                  }`}
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  {/* Selection indicator bar */}
+                  <div
+                    className={`h-1 transition-colors ${
+                      isSelected ? "bg-glow" : "bg-transparent"
+                    }`}
+                  />
+
+                  <div className="px-7 pb-6 pt-5">
+                    {/* Header row */}
+                    <div className="flex justify-between items-start gap-3 mb-1">
+                      <div className="flex items-center gap-3">
+                        {/* Radio circle */}
+                        <div
+                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                            isSelected
+                              ? "border-ink bg-ink"
+                              : "border-border bg-white"
+                          }`}
+                        >
+                          {isSelected && (
+                            <div className="w-2 h-2 rounded-full bg-glow" />
+                          )}
+                        </div>
+                        <h2 className="font-bold text-[16px] text-ink">
+                          {idea.title}
+                        </h2>
+                      </div>
+                      {/* Vote count */}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="font-mono text-[20px] font-extrabold text-ink">
+                          {votes}
+                        </span>
+                        <span className="font-mono text-[10px] text-muted uppercase tracking-wider">
+                          vote{votes !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Meta */}
+                    <p className="text-[12px] text-mid mb-4 ml-8">
+                      {idea.submitter_name} · {idea.team} ·{" "}
+                      {fmtDate(idea.created_at)}
+                    </p>
+
+                    {/* Problem */}
+                    <div className="mb-3 ml-8">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
+                        Problem
+                      </span>
+                      <p className="text-[13px] text-ink leading-relaxed mt-0.5 line-clamp-3">
+                        {idea.problem}
+                      </p>
+                    </div>
+
+                    {/* Solution */}
+                    <div className="mb-4 ml-8">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
+                        Solution
+                      </span>
+                      <p className="text-[13px] text-ink leading-relaxed mt-0.5 line-clamp-3">
+                        {idea.solution}
+                      </p>
+                    </div>
+
+                    {/* Footer: pillars, gates, score */}
+                    <div className="flex justify-between items-end flex-wrap gap-3 ml-8">
+                      <div className="flex flex-col gap-2">
+                        {/* Pillar tags */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {pillars.map((name) => (
+                            <span
+                              key={name}
+                              className="bg-ink/[0.08] text-ink rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+                            >
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                        {/* Gate results */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {GATES.map((gate) => {
+                            const val = idea[gate.id];
+                            return (
+                              <span
+                                key={gate.id}
+                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold font-mono uppercase tracking-wider ${gateColor(val)}`}
+                              >
+                                {gate.label}: {val}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      {/* Score badge */}
+                      <div
+                        className={`inline-flex items-center gap-2.5 rounded-[10px] px-4 py-2 ${sl.bg}`}
+                      >
+                        <span
+                          className={`font-extrabold text-[20px] ${sl.color}`}
+                        >
+                          {total > 0 ? `${total}/15` : "—"}
+                        </span>
+                        <span
+                          className={`font-mono text-[11px] uppercase tracking-wider font-medium ${sl.color}`}
+                        >
+                          {sl.label}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
