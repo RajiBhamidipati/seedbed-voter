@@ -11,13 +11,6 @@ const fmtDate = (iso: string) =>
     year: "numeric",
   });
 
-function scoreLabel(total: number | null) {
-  if (total === null) return { label: "Needs Clarity", color: "text-[#8b6914]", bg: "bg-[#fef3cd]" };
-  if (total >= 12) return { label: "Proceed to POC", color: "text-green-sem", bg: "bg-green-bg" };
-  if (total >= 8) return { label: "Conditional", color: "text-amber-sem", bg: "bg-amber-bg" };
-  return { label: "Park for now", color: "text-red-sem", bg: "bg-red-bg" };
-}
-
 function gateColor(val: string) {
   if (val === "Yes") return "text-green-sem bg-green-bg";
   if (val === "Partially") return "text-amber-sem bg-amber-bg";
@@ -239,8 +232,6 @@ export default function Home() {
               const pillars = (idea.pillars || [])
                 .map((pid) => PILLARS[pid])
                 .filter(Boolean);
-              const total = idea.total_score;
-              const sl = scoreLabel(total > 0 ? total : null);
               const picks = pickCounts[idea.id] || 0;
 
               return (
@@ -377,21 +368,6 @@ export default function Home() {
                             {name}
                           </span>
                         ))}
-                      </div>
-                      {/* Score badge */}
-                      <div
-                        className={`inline-flex items-center gap-2.5 rounded-[10px] px-4 py-2 ${sl.bg}`}
-                      >
-                        <span
-                          className={`font-extrabold text-[20px] ${sl.color}`}
-                        >
-                          {total > 0 ? `${total}/15` : "—"}
-                        </span>
-                        <span
-                          className={`font-mono text-[11px] uppercase tracking-wider font-medium ${sl.color}`}
-                        >
-                          {sl.label}
-                        </span>
                       </div>
                     </div>
                   </div>
