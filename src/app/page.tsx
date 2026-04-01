@@ -309,7 +309,7 @@ export default function Home() {
                     </div>
 
                     {/* Solution */}
-                    <div className="mb-4 ml-8">
+                    <div className="mb-3 ml-8">
                       <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
                         Solution
                       </span>
@@ -318,34 +318,65 @@ export default function Home() {
                       </p>
                     </div>
 
-                    {/* Footer: pillars, gates, score */}
-                    <div className="flex justify-between items-end flex-wrap gap-3 ml-8">
-                      <div className="flex flex-col gap-2">
-                        {/* Pillar tags */}
-                        <div className="flex gap-1.5 flex-wrap">
-                          {pillars.map((name) => (
-                            <span
-                              key={name}
-                              className="bg-ink/[0.08] text-ink rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
-                            >
-                              {name}
-                            </span>
-                          ))}
-                        </div>
-                        {/* Gate results */}
-                        <div className="flex gap-1.5 flex-wrap">
-                          {GATES.map((gate) => {
-                            const val = idea[gate.id];
-                            return (
+                    {/* Beneficiary */}
+                    {idea.beneficiary && (
+                      <div className="mb-3 ml-8">
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
+                          Who benefits
+                        </span>
+                        <p className="text-[13px] text-ink leading-relaxed mt-0.5 whitespace-pre-line line-clamp-4">
+                          {idea.beneficiary}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Success Metric */}
+                    {idea.success_metric && (
+                      <div className="mb-3 ml-8">
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
+                          Success metric
+                        </span>
+                        <p className="text-[13px] text-ink leading-relaxed mt-0.5 whitespace-pre-line line-clamp-4">
+                          {idea.success_metric}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Gates */}
+                    <div className="mb-4 ml-8">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium block mb-1.5">
+                        Readiness gates
+                      </span>
+                      <div className="flex flex-col gap-1.5">
+                        {GATES.map((gate) => {
+                          const val = idea[gate.id];
+                          return (
+                            <div key={gate.id} className="flex items-center gap-2">
                               <span
-                                key={gate.id}
-                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold font-mono uppercase tracking-wider ${gateColor(val)}`}
+                                className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-semibold font-mono uppercase tracking-wider ${gateColor(val)}`}
                               >
-                                {gate.label}: {val}
+                                {val}
                               </span>
-                            );
-                          })}
-                        </div>
+                              <span className="text-[12px] text-mid">
+                                {gate.label}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Footer: pillars + score */}
+                    <div className="flex justify-between items-end flex-wrap gap-3 ml-8">
+                      <div className="flex gap-1.5 flex-wrap">
+                        {pillars.map((name) => (
+                          <span
+                            key={name}
+                            className="bg-ink/[0.08] text-ink rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+                          >
+                            {name}
+                          </span>
+                        ))}
                       </div>
                       {/* Score badge */}
                       <div
