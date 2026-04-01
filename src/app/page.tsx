@@ -19,6 +19,8 @@ function gateColor(val: string) {
 
 type PickCounts = Record<string, { first: number; second: number }>;
 
+const DEADLINE = new Date("2026-04-07T23:59:59+01:00"); // Tuesday 7 April 2026, end of day BST
+
 export default function Home() {
   const [ideas, setIdeas] = useState<Submission[]>([]);
   const [pickCounts, setPickCounts] = useState<PickCounts>({});
@@ -110,8 +112,14 @@ export default function Home() {
     }
   }
 
+  const isClosed = new Date() > DEADLINE;
+
   // Submit picks
   async function handleSubmit() {
+    if (isClosed) {
+      setMessage({ type: "error", text: "Voting has closed." });
+      return;
+    }
     const name = pickerName.trim();
     if (!name) {
       setMessage({ type: "error", text: "Please enter your name." });
@@ -205,6 +213,9 @@ export default function Home() {
           The AI Council has shortlisted 5 ideas from Seedbed. Pick your first
           and second choice — the ideas you&apos;d most like to help solve.
         </p>
+        <p className={`font-mono text-[12px] mt-3 uppercase tracking-wider ${isClosed ? "text-red-bg" : "text-glow"}`}>
+          {isClosed ? "Voting closed" : "Deadline: Tuesday 7 April 2026"}
+        </p>
       </div>
 
       {/* Content */}
@@ -224,10 +235,10 @@ export default function Home() {
             />
             <button
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={submitting || isClosed}
               className="bg-glow text-ink border-none rounded-[10px] px-6 py-2.5 font-bold text-[14px] hover:brightness-95 transition disabled:opacity-50"
             >
-              {submitting ? "Submitting…" : "Submit choices"}
+              {isClosed ? "Voting closed" : submitting ? "Submitting…" : "Submit choices"}
             </button>
             <button
               onClick={exportCSV}
