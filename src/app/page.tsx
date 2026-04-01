@@ -26,9 +26,9 @@ function gateColor(val: string) {
 
 export default function Home() {
   const [ideas, setIdeas] = useState<Submission[]>([]);
-  const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
+  const [pickCounts, setPickCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
-  const [voterName, setVoterName] = useState("");
+  const [pickerName, setPickerName] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -47,12 +47,12 @@ export default function Home() {
     fetchIdeas();
   }, []);
 
-  // Fetch vote counts
-  const fetchVoteCounts = useCallback(async () => {
+  // Fetch pick counts
+  const fetchPickCounts = useCallback(async () => {
     if (ideas.length === 0) return;
     const ids = ideas.map((i) => i.id);
     const { data } = await supabase
-      .from("votes")
+      .from("idea_picks")
       .select("submission_id")
       .in("submission_id", ids);
     if (data) {
@@ -61,72 +61,72 @@ export default function Home() {
       data.forEach((v: { submission_id: string }) => {
         counts[v.submission_id] = (counts[v.submission_id] || 0) + 1;
       });
-      setVoteCounts(counts);
+      setPickCounts(counts);
     }
   }, [ideas]);
 
   useEffect(() => {
-    fetchVoteCounts();
-  }, [fetchVoteCounts]);
+    fetchPickCounts();
+  }, [fetchPickCounts]);
 
-  // Real-time subscription for votes
+  // Real-time subscription for picks
   useEffect(() => {
     if (ideas.length === 0) return;
     const channel = supabase
-      .channel("votes-realtime")
+      .channel("picks-realtime")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "votes" },
+        { event: "*", schema: "public", table: "idea_picks" },
         () => {
-          fetchVoteCounts();
+          fetchPickCounts();
         }
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [ideas, fetchVoteCounts]);
+  }, [ideas, fetchPickCounts]);
 
-  // Submit vote
-  async function handleVote() {
-    const name = voterName.trim();
+  // Submit pick
+  async function handlePick() {
+    const name = pickerName.trim();
     if (!name) {
       setMessage({ type: "error", text: "Please enter your name." });
       return;
     }
     if (!selectedId) {
-      setMessage({ type: "error", text: "Please select an idea to vote for." });
+      setMessage({ type: "error", text: "Please select an idea first." });
       return;
     }
     setSubmitting(true);
     setMessage(null);
 
-    // Case-insensitive duplicate check
+    // Case-insensitive duplicate check — one pick per person
     const { data: existing } = await supabase
-      .from("votes")
-      .select("voter_name")
-      .ilike("voter_name", name);
+      .from("idea_picks")
+      .select("picker_name")
+      .ilike("picker_name", name);
 
     if (existing && existing.length > 0) {
-      setMessage({ type: "error", text: `You've already voted, ${name}.` });
+      setMessage({ type: "error", text: `You've already picked an idea, ${name}.` });
       setSubmitting(false);
       return;
     }
 
     const { error } = await supabase
-      .from("votes")
-      .insert({ submission_id: selectedId, voter_name: name });
+      .from("idea_picks")
+      .insert({ submission_id: selectedId, picker_name: name });
 
     if (error) {
       if (error.code === "23505") {
-        setMessage({ type: "error", text: `You've already voted, ${name}.` });
+        setMessage({ type: "error", text: `You've already picked an idea, ${name}.` });
       } else {
         setMessage({ type: "error", text: "Something went wrong. Please try again." });
       }
     } else {
-      setMessage({ type: "success", text: `Thanks for voting, ${name}!` });
+      setMessage({ type: "success", text: `Thanks ${name} — your pick has been recorded!` });
       setSelectedId(null);
-      setVoterName("");
+      setPickerName("");
     }
     setSubmitting(false);
   }
@@ -135,24 +135,24 @@ export default function Home() {
   async function exportCSV() {
     if (ideas.length === 0) return;
     const ids = ideas.map((i) => i.id);
-    const { data: votes } = await supabase
-      .from("votes")
-      .select("voter_name, submission_id, created_at")
+    const { data: picks } = await supabase
+      .from("idea_picks")
+      .select("picker_name, submission_id, created_at")
       .in("submission_id", ids)
       .order("created_at");
 
-    if (!votes || votes.length === 0) {
-      setMessage({ type: "error", text: "No votes to export yet." });
+    if (!picks || picks.length === 0) {
+      setMessage({ type: "error", text: "No picks to export yet." });
       return;
     }
 
     const titleMap = Object.fromEntries(ideas.map((i) => [i.id, i.title]));
     const rows = [
-      ["voter_name", "idea_title", "created_at"],
-      ...votes.map((v: { voter_name: string; submission_id: string; created_at: string }) => [
-        v.voter_name,
-        titleMap[v.submission_id] || "",
-        v.created_at,
+      ["name", "idea_title", "picked_at"],
+      ...picks.map((p: { picker_name: string; submission_id: string; created_at: string }) => [
+        p.picker_name,
+        titleMap[p.submission_id] || "",
+        p.created_at,
       ]),
     ];
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -160,23 +160,23 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "seedbed-votes.csv";
+    a.download = "seedbed-picks.csv";
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  const totalVotes = Object.values(voteCounts).reduce((a, b) => a + b, 0);
+  const totalPicks = Object.values(pickCounts).reduce((a, b) => a + b, 0);
 
   return (
     <main className="min-h-screen">
       {/* Hero */}
       <div className="bg-ink px-7 pb-10 pt-8">
         <h1 className="text-white font-extrabold text-[28px] tracking-tight mb-1">
-          Vote for your favourite AI idea
+          Which idea do you want to work on?
         </h1>
         <p className="text-white/50 text-[15px] max-w-xl">
-          The AI Council has shortlisted 5 ideas from Seedbed. Pick the one you
-          think we should build first.
+          The AI Council has shortlisted 5 ideas from Seedbed. Pick the one
+          you&apos;d most like to help solve.
         </p>
       </div>
 
@@ -190,17 +190,17 @@ export default function Home() {
           <div className="flex gap-3 items-start flex-wrap">
             <input
               type="text"
-              value={voterName}
-              onChange={(e) => setVoterName(e.target.value)}
+              value={pickerName}
+              onChange={(e) => setPickerName(e.target.value)}
               placeholder="e.g. Jane Smith"
               className="flex-1 min-w-[200px] px-3.5 py-2.5 rounded-lg border-[1.5px] border-border text-[14px] text-ink bg-white outline-none focus:border-brand transition-colors"
             />
             <button
-              onClick={handleVote}
+              onClick={handlePick}
               disabled={submitting}
               className="bg-glow text-ink border-none rounded-[10px] px-6 py-2.5 font-bold text-[14px] hover:brightness-95 transition disabled:opacity-50"
             >
-              {submitting ? "Voting…" : "Cast Vote"}
+              {submitting ? "Submitting…" : "I want to work on this"}
             </button>
             <button
               onClick={exportCSV}
@@ -219,7 +219,7 @@ export default function Home() {
             </p>
           )}
           <p className="mt-3 font-mono text-[11px] text-muted uppercase tracking-wider">
-            {totalVotes} vote{totalVotes !== 1 ? "s" : ""} cast so far
+            {totalPicks} pick{totalPicks !== 1 ? "s" : ""} so far
           </p>
         </div>
 
@@ -241,7 +241,7 @@ export default function Home() {
                 .filter(Boolean);
               const total = idea.total_score;
               const sl = scoreLabel(total > 0 ? total : null);
-              const votes = voteCounts[idea.id] || 0;
+              const picks = pickCounts[idea.id] || 0;
 
               return (
                 <div
@@ -281,13 +281,13 @@ export default function Home() {
                           {idea.title}
                         </h2>
                       </div>
-                      {/* Vote count */}
+                      {/* Pick count */}
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="font-mono text-[20px] font-extrabold text-ink">
-                          {votes}
+                          {picks}
                         </span>
                         <span className="font-mono text-[10px] text-muted uppercase tracking-wider">
-                          vote{votes !== 1 ? "s" : ""}
+                          pick{picks !== 1 ? "s" : ""}
                         </span>
                       </div>
                     </div>
