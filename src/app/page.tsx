@@ -17,12 +17,15 @@ function gateColor(val: string) {
   return "text-red-sem bg-red-bg";
 }
 
+type PickCounts = Record<string, { first: number; second: number }>;
+
 export default function Home() {
   const [ideas, setIdeas] = useState<Submission[]>([]);
-  const [pickCounts, setPickCounts] = useState<Record<string, number>>({});
+  const [pickCounts, setPickCounts] = useState<PickCounts>({});
   const [loading, setLoading] = useState(true);
   const [pickerName, setPickerName] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [firstChoice, setFirstChoice] = useState<string | null>(null);
+  const [secondChoice, setSecondChoice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -40,19 +43,24 @@ export default function Home() {
     fetchIdeas();
   }, []);
 
-  // Fetch pick counts
+  // Fetch pick counts (first + second separately)
   const fetchPickCounts = useCallback(async () => {
     if (ideas.length === 0) return;
     const ids = ideas.map((i) => i.id);
     const { data } = await supabase
       .from("idea_picks")
-      .select("submission_id")
-      .in("submission_id", ids);
+      .select("first_choice, second_choice");
+
     if (data) {
-      const counts: Record<string, number> = {};
-      ids.forEach((id) => (counts[id] = 0));
-      data.forEach((v: { submission_id: string }) => {
-        counts[v.submission_id] = (counts[v.submission_id] || 0) + 1;
+      const counts: PickCounts = {};
+      ids.forEach((id) => (counts[id] = { first: 0, second: 0 }));
+      data.forEach((row: { first_choice: string; second_choice: string | null }) => {
+        if (row.first_choice && counts[row.first_choice]) {
+          counts[row.first_choice].first += 1;
+        }
+        if (row.second_choice && counts[row.second_choice]) {
+          counts[row.second_choice].second += 1;
+        }
       });
       setPickCounts(counts);
     }
@@ -80,45 +88,72 @@ export default function Home() {
     };
   }, [ideas, fetchPickCounts]);
 
-  // Submit pick
-  async function handlePick() {
+  // Handle card click — toggle first choice, then second choice
+  function handleCardClick(id: string) {
+    if (firstChoice === id) {
+      // Deselect first choice
+      setFirstChoice(null);
+      return;
+    }
+    if (secondChoice === id) {
+      // Deselect second choice
+      setSecondChoice(null);
+      return;
+    }
+    if (!firstChoice) {
+      setFirstChoice(id);
+    } else if (!secondChoice) {
+      setSecondChoice(id);
+    } else {
+      // Both set — replace second choice
+      setSecondChoice(id);
+    }
+  }
+
+  // Submit picks
+  async function handleSubmit() {
     const name = pickerName.trim();
     if (!name) {
       setMessage({ type: "error", text: "Please enter your name." });
       return;
     }
-    if (!selectedId) {
-      setMessage({ type: "error", text: "Please select an idea first." });
+    if (!firstChoice) {
+      setMessage({ type: "error", text: "Please select your first choice." });
       return;
     }
     setSubmitting(true);
     setMessage(null);
 
-    // Case-insensitive duplicate check — one pick per person
+    // Case-insensitive duplicate check
     const { data: existing } = await supabase
       .from("idea_picks")
       .select("picker_name")
       .ilike("picker_name", name);
 
     if (existing && existing.length > 0) {
-      setMessage({ type: "error", text: `You've already picked an idea, ${name}.` });
+      setMessage({ type: "error", text: `You've already submitted your picks, ${name}.` });
       setSubmitting(false);
       return;
     }
 
     const { error } = await supabase
       .from("idea_picks")
-      .insert({ submission_id: selectedId, picker_name: name });
+      .insert({
+        first_choice: firstChoice,
+        second_choice: secondChoice,
+        picker_name: name,
+      });
 
     if (error) {
       if (error.code === "23505") {
-        setMessage({ type: "error", text: `You've already picked an idea, ${name}.` });
+        setMessage({ type: "error", text: `You've already submitted your picks, ${name}.` });
       } else {
         setMessage({ type: "error", text: "Something went wrong. Please try again." });
       }
     } else {
-      setMessage({ type: "success", text: `Thanks ${name} — your pick has been recorded!` });
-      setSelectedId(null);
+      setMessage({ type: "success", text: `Thanks ${name} — your choices have been recorded!` });
+      setFirstChoice(null);
+      setSecondChoice(null);
       setPickerName("");
     }
     setSubmitting(false);
@@ -127,11 +162,9 @@ export default function Home() {
   // CSV export
   async function exportCSV() {
     if (ideas.length === 0) return;
-    const ids = ideas.map((i) => i.id);
     const { data: picks } = await supabase
       .from("idea_picks")
-      .select("picker_name, submission_id, created_at")
-      .in("submission_id", ids)
+      .select("picker_name, first_choice, second_choice, created_at")
       .order("created_at");
 
     if (!picks || picks.length === 0) {
@@ -141,10 +174,11 @@ export default function Home() {
 
     const titleMap = Object.fromEntries(ideas.map((i) => [i.id, i.title]));
     const rows = [
-      ["name", "idea_title", "picked_at"],
-      ...picks.map((p: { picker_name: string; submission_id: string; created_at: string }) => [
+      ["name", "first_choice", "second_choice", "picked_at"],
+      ...picks.map((p: { picker_name: string; first_choice: string; second_choice: string | null; created_at: string }) => [
         p.picker_name,
-        titleMap[p.submission_id] || "",
+        titleMap[p.first_choice] || "",
+        p.second_choice ? titleMap[p.second_choice] || "" : "",
         p.created_at,
       ]),
     ];
@@ -158,18 +192,18 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }
 
-  const totalPicks = Object.values(pickCounts).reduce((a, b) => a + b, 0);
+  const totalPeople = Object.values(pickCounts).reduce((a, b) => a + b.first, 0);
 
   return (
     <main className="min-h-screen">
       {/* Hero */}
       <div className="bg-ink px-7 pb-10 pt-8">
         <h1 className="text-white font-extrabold text-[28px] tracking-tight mb-1">
-          Which idea do you want to work on?
+          Which ideas do you want to work on?
         </h1>
         <p className="text-white/50 text-[15px] max-w-xl">
-          The AI Council has shortlisted 5 ideas from Seedbed. Pick the one
-          you&apos;d most like to help solve.
+          The AI Council has shortlisted 5 ideas from Seedbed. Pick your first
+          and second choice — the ideas you&apos;d most like to help solve.
         </p>
       </div>
 
@@ -189,19 +223,40 @@ export default function Home() {
               className="flex-1 min-w-[200px] px-3.5 py-2.5 rounded-lg border-[1.5px] border-border text-[14px] text-ink bg-white outline-none focus:border-brand transition-colors"
             />
             <button
-              onClick={handlePick}
+              onClick={handleSubmit}
               disabled={submitting}
               className="bg-glow text-ink border-none rounded-[10px] px-6 py-2.5 font-bold text-[14px] hover:brightness-95 transition disabled:opacity-50"
             >
-              {submitting ? "Submitting…" : "I want to work on this"}
+              {submitting ? "Submitting…" : "Submit choices"}
             </button>
             <button
               onClick={exportCSV}
               className="bg-transparent text-ink border-[1.5px] border-ink rounded-[10px] px-5 py-2.5 font-semibold text-[14px] hover:bg-ink hover:text-white transition"
             >
-              Export Results (CSV)
+              Export (CSV)
             </button>
           </div>
+
+          {/* Selection summary */}
+          <div className="mt-3 flex gap-4 items-center flex-wrap">
+            <span className="font-mono text-[11px] text-muted uppercase tracking-wider">
+              1st:{" "}
+              <span className={firstChoice ? "text-ink font-semibold" : ""}>
+                {firstChoice
+                  ? ideas.find((i) => i.id === firstChoice)?.title ?? "—"
+                  : "click a card"}
+              </span>
+            </span>
+            <span className="font-mono text-[11px] text-muted uppercase tracking-wider">
+              2nd:{" "}
+              <span className={secondChoice ? "text-ink font-semibold" : ""}>
+                {secondChoice
+                  ? ideas.find((i) => i.id === secondChoice)?.title ?? "—"
+                  : "optional"}
+              </span>
+            </span>
+          </div>
+
           {message && (
             <p
               className={`mt-3 text-[13px] font-medium ${
@@ -212,7 +267,7 @@ export default function Home() {
             </p>
           )}
           <p className="mt-3 font-mono text-[11px] text-muted uppercase tracking-wider">
-            {totalPicks} pick{totalPicks !== 1 ? "s" : ""} so far
+            {totalPeople} {totalPeople === 1 ? "person has" : "people have"} picked so far
           </p>
         </div>
 
@@ -228,16 +283,18 @@ export default function Home() {
         ) : (
           <div className="flex flex-col gap-5">
             {ideas.map((idea, i) => {
-              const isSelected = selectedId === idea.id;
+              const isFirst = firstChoice === idea.id;
+              const isSecond = secondChoice === idea.id;
+              const isSelected = isFirst || isSecond;
               const pillars = (idea.pillars || [])
                 .map((pid) => PILLARS[pid])
                 .filter(Boolean);
-              const picks = pickCounts[idea.id] || 0;
+              const counts = pickCounts[idea.id] || { first: 0, second: 0 };
 
               return (
                 <div
                   key={idea.id}
-                  onClick={() => setSelectedId(idea.id)}
+                  onClick={() => handleCardClick(idea.id)}
                   className={`fade-up bg-white rounded-card p-0 shadow-card cursor-pointer transition-all overflow-hidden ${
                     isSelected
                       ? "ring-[2.5px] ring-glow"
@@ -248,7 +305,7 @@ export default function Home() {
                   {/* Selection indicator bar */}
                   <div
                     className={`h-1 transition-colors ${
-                      isSelected ? "bg-glow" : "bg-transparent"
+                      isFirst ? "bg-glow" : isSecond ? "bg-brand" : "bg-transparent"
                     }`}
                   />
 
@@ -256,41 +313,51 @@ export default function Home() {
                     {/* Header row */}
                     <div className="flex justify-between items-start gap-3 mb-1">
                       <div className="flex items-center gap-3">
-                        {/* Radio circle */}
+                        {/* Choice badge */}
                         <div
-                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                            isSelected
-                              ? "border-ink bg-ink"
-                              : "border-border bg-white"
+                          className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors text-[11px] font-bold ${
+                            isFirst
+                              ? "bg-ink text-glow"
+                              : isSecond
+                              ? "bg-brand text-white"
+                              : "border-2 border-border bg-white text-transparent"
                           }`}
                         >
-                          {isSelected && (
-                            <div className="w-2 h-2 rounded-full bg-glow" />
-                          )}
+                          {isFirst ? "1" : isSecond ? "2" : "·"}
                         </div>
                         <h2 className="font-bold text-[16px] text-ink">
                           {idea.title}
                         </h2>
                       </div>
-                      {/* Pick count */}
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className="font-mono text-[20px] font-extrabold text-ink">
-                          {picks}
-                        </span>
-                        <span className="font-mono text-[10px] text-muted uppercase tracking-wider">
-                          pick{picks !== 1 ? "s" : ""}
-                        </span>
+                      {/* Pick counts */}
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <div className="text-center">
+                          <span className="font-mono text-[18px] font-extrabold text-ink block leading-none">
+                            {counts.first}
+                          </span>
+                          <span className="font-mono text-[9px] text-muted uppercase tracking-wider">
+                            1st
+                          </span>
+                        </div>
+                        <div className="text-center">
+                          <span className="font-mono text-[18px] font-extrabold text-mid block leading-none">
+                            {counts.second}
+                          </span>
+                          <span className="font-mono text-[9px] text-muted uppercase tracking-wider">
+                            2nd
+                          </span>
+                        </div>
                       </div>
                     </div>
 
                     {/* Meta */}
-                    <p className="text-[12px] text-mid mb-4 ml-8">
+                    <p className="text-[12px] text-mid mb-4 ml-9">
                       {idea.submitter_name} · {idea.team} ·{" "}
                       {fmtDate(idea.created_at)}
                     </p>
 
                     {/* Problem */}
-                    <div className="mb-3 ml-8">
+                    <div className="mb-3 ml-9">
                       <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
                         Problem
                       </span>
@@ -300,7 +367,7 @@ export default function Home() {
                     </div>
 
                     {/* Solution */}
-                    <div className="mb-3 ml-8">
+                    <div className="mb-3 ml-9">
                       <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
                         Solution
                       </span>
@@ -311,7 +378,7 @@ export default function Home() {
 
                     {/* Beneficiary */}
                     {idea.beneficiary && (
-                      <div className="mb-3 ml-8">
+                      <div className="mb-3 ml-9">
                         <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
                           Who benefits
                         </span>
@@ -323,7 +390,7 @@ export default function Home() {
 
                     {/* Success Metric */}
                     {idea.success_metric && (
-                      <div className="mb-3 ml-8">
+                      <div className="mb-3 ml-9">
                         <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium">
                           Success metric
                         </span>
@@ -334,7 +401,7 @@ export default function Home() {
                     )}
 
                     {/* Gates */}
-                    <div className="mb-4 ml-8">
+                    <div className="mb-4 ml-9">
                       <span className="font-mono text-[10px] uppercase tracking-wider text-muted font-medium block mb-1.5">
                         Readiness gates
                       </span>
@@ -357,18 +424,16 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Footer: pillars + score */}
-                    <div className="flex justify-between items-end flex-wrap gap-3 ml-8">
-                      <div className="flex gap-1.5 flex-wrap">
-                        {pillars.map((name) => (
-                          <span
-                            key={name}
-                            className="bg-ink/[0.08] text-ink rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
-                          >
-                            {name}
-                          </span>
-                        ))}
-                      </div>
+                    {/* Pillars */}
+                    <div className="flex gap-1.5 flex-wrap ml-9">
+                      {pillars.map((name) => (
+                        <span
+                          key={name}
+                          className="bg-ink/[0.08] text-ink rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+                        >
+                          {name}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 </div>
