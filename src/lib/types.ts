@@ -43,7 +43,7 @@ export const GATES = [
 
 export const SHORTLISTED_TITLES = [
   'AI assisted BTL Portfolio upload',
-  'AI Requirements Reviewer',
+  'Ai Requirements Reviewer',
   'AI-Assisted Field Mapping and Data Translation for System Integration',
   'AI-Assisted Document & Data Capture',
   'Research Agent',
